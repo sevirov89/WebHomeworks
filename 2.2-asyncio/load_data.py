@@ -4,8 +4,24 @@ import asyncio
 from config import DB_CONFIG
 
 
+BASE_URL = "https://www.swapi.tech/api/people/"
+
+async def get_max_id(session):
+    async with session.get(BASE_URL) as response:
+        try:
+            if response.status == 200:
+                data = await response.json()
+                return data['total_records']
+            else:
+                print(f"Ошибка определения max_id {BASE_URL}")
+        except Exception as e:
+            print(f"Ошибка запроса max_id {BASE_URL}")
+            print(e)
+            return None
+
+
 async def fetch_character(session, character_id):
-    url = f"https://www.swapi.tech/api/people/{character_id}"
+    url = f"{BASE_URL}{character_id}"
     async with session.get(url) as response:
         if response.status == 200:
             data = await response.json()
@@ -40,18 +56,19 @@ async def process_character(session, conn, character_id):
         character_data = await fetch_character(session, character_id)
         if character_data:
             await insert_character(conn, character_data, character_id)
-            print(f"Processed character {character_id}")
+            print(f"Обработка персонажа {character_id}")
         else:
-            print(f"Character {character_id} not found")
+            print(f"Персонаж {character_id} не найден")
     except Exception as e:
-        print(f"Error processing character {character_id}: {e}")
+        print(f"Ошибка обработки персонажа {character_id}: {e}")
 
 
 async def main():
     conn = await asyncpg.connect(**DB_CONFIG)
     async with aiohttp.ClientSession() as session:
+        max_id = await get_max_id(session)
         tasks = []
-        for character_id in range(1, 101):
+        for character_id in range(1, max_id + 1):
             task = asyncio.create_task(process_character(session, conn, character_id))
             tasks.append(task)
 

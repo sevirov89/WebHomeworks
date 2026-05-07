@@ -6,7 +6,6 @@ async def create_table():
     conn = await asyncpg.connect(**DB_CONFIG)
     try:
         await conn.execute('''
-            DROP TABLE IF EXISTS star_wars_people;
             CREATE TABLE star_wars_people (
                 id INTEGER PRIMARY KEY,
                 birth_year TEXT,
@@ -19,7 +18,7 @@ async def create_table():
                 skin_color TEXT
             )
         ''')
-        print("Table created successfully")
+        print("Таблица успешно создана")
     finally:
         await conn.close()
 
