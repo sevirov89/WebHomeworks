@@ -5,6 +5,10 @@ from config import DB_CONFIG
 
 
 BASE_URL = "https://www.swapi.tech/api/people/"
+# Максимальное количество одновременных соединений с БД
+# Ограничивает параллельные INSERT-операции для предотвращения перегрузки
+DB_POOL_SIZE = 10
+
 
 async def get_max_id(session):
     async with session.get(BASE_URL) as response:
@@ -35,7 +39,7 @@ async def insert_character(conn, character_data, character_id):
 
     await conn.execute('''
         INSERT INTO star_wars_people (
-            id, birth_year, eye_color, gender, hair_color, 
+            id, birth_year, eye_color, gender, hair_color,
             homeworld, mass, name, skin_color
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (id) DO NOTHING
@@ -51,11 +55,15 @@ async def insert_character(conn, character_data, character_id):
                        character_data.get('skin_color'))
 
 
-async def process_character(session, conn, character_id):
+async def process_character(session, pool, character_id):
     try:
         character_data = await fetch_character(session, character_id)
         if character_data:
-            await insert_character(conn, character_data, character_id)
+            # Берем соединение из пула только на время выполнения INSERT
+            # Это гарантирует, что каждая операция записи использует
+            # собственное соединение, предотвращая конфликты при конкурентном доступе
+            async with pool.acquire() as conn:
+                await insert_character(conn, character_data, character_id)
             print(f"Обработка персонажа {character_id}")
         else:
             print(f"Персонаж {character_id} не найден")
@@ -64,17 +72,27 @@ async def process_character(session, conn, character_id):
 
 
 async def main():
-    conn = await asyncpg.connect(**DB_CONFIG)
-    async with aiohttp.ClientSession() as session:
-        max_id = await get_max_id(session)
-        tasks = []
-        for character_id in range(1, max_id + 1):
-            task = asyncio.create_task(process_character(session, conn, character_id))
-            tasks.append(task)
+    # Создаем пул соединений вместо одного соединения
+    # Пул автоматически управляет соединениями и ограничивает
+    # количество одновременных операций с БД
+    pool = await asyncpg.create_pool(
+        **DB_CONFIG,
+        min_size=DB_POOL_SIZE,
+        max_size=DB_POOL_SIZE
+    )
+    try:
+        async with aiohttp.ClientSession() as session:
+            max_id = await get_max_id(session)
+            tasks = []
+            for character_id in range(1, max_id + 1):
+                # Передаем пул вместо отдельного соединения
+                task = asyncio.create_task(process_character(session, pool, character_id))
+                tasks.append(task)
 
-        await asyncio.gather(*tasks)
-
-    await conn.close()
+            await asyncio.gather(*tasks)
+    finally:
+        # Корректно закрываем пул соединений
+        await pool.close()
 
 
 if __name__ == '__main__':
